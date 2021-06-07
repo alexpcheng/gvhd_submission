@@ -1,4 +1,5 @@
 #SOFTWARES USED
+conda
 bbmap/bbduk
 Bismark
 bowtie
