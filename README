@@ -1,1 +1,33 @@
-test
+#SOFTWARES USED
+bbmap/bbduk
+Bismark
+bowtie
+bowtie2
+CrossMap
+ddcfDNA
+fastq-pair
+GRAMMy
+HMMcopy
+hs-blastn
+blast
+ichorCNA
+LBBC (LowBiomassBackgroundCorrection)
+methpipe
+MethylDackel
+metilene
+mosdepth
+picard
+sambamba
+seqtk
+SPRING
+TrimGalore
+Trimmommatic
+vcftools
+WASP
+fastqc
+bedops
+bedtools
+samtools
+UCSC tools such as bigWigToBedGraph
+FLASH
+bwa
