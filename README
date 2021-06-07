@@ -32,3 +32,4 @@ samtools
 UCSC tools such as bigWigToBedGraph
 FLASH
 bwa
+SGREP
