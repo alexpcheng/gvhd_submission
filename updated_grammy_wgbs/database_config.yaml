@@ -1,0 +1,7 @@
+# Locations
+CLUSTER: /
+# software
+SGREP: /programs/sgrep_sorted/bin/sgrep
+HSBLAST: /workdir/apc88/GVHD/software/hs-blastn-src/hs-blastn
+#Scripts
+GRAMMY_GDT: /workdir/apc88/GVHD/software/GRAMMy/grammy/grammy_gdt.py
