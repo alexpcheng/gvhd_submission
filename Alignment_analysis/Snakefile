@@ -1,0 +1,903 @@
+"""
+Snakefile to perform trimming, alignment and collect statistics on fastQ files
+generated from bisulfite-treated cfDNA libraries.
+"""
+
+################################################################################
+# Config file and setting parameters
+################################################################################
+configfile: 'config.yaml'
+configfile: 'config_ichorCNA.yaml'
+################################################################################
+# CLUSTER USED
+################################################################################
+CLUSTER = config['CLUSTER']
+################################################################################
+# File locations
+################################################################################
+ADAPTOR_SEQUENCES = CLUSTER+config['ADAPTOR_SEQUENCES']
+METHREF = CLUSTER+config['METHREF']
+HG19 = CLUSTER+config['HG19']
+CTLREF = CLUSTER+config['CTLREF']
+CTLREF_fasta = CLUSTER+config['CTLREF_fasta']
+DATA = CLUSTER+config['DATA']
+LISTS = CLUSTER+config['LISTS']
+REFERENCES = CLUSTER+config['REFERENCES']
+REFERENCE_METHYLOMES = CLUSTER+config['REFERENCE_METHYLOMES']
+################################################################################
+# Software paths
+################################################################################
+SPRING=CLUSTER + config['SPRING']
+BBDUK = CLUSTER+config['BBDUK']
+BISMARK = CLUSTER+config['BISMARK']
+METHEXT = CLUSTER+config['METHEXT']
+METHPIPETOMR = CLUSTER+config['METHPIPETOMR']
+METHPIPEBSRATE = CLUSTER+config['METHPIPEBSRATE']
+ddcfDNA = CLUSTER+config['ddcfDNA']
+FASTQPAIR = CLUSTER+config['FASTQPAIR']
+HMMCOPY_READCOUNTER = CLUSTER+config['HMMCOPY_READCOUNTER']
+SEQTK = CLUSTER+config['SEQTK']
+RMDUPS = CLUSTER+config['RMDUPS']
+MOSDEPTH = CLUSTER + config['MOSDEPTH']
+################################################################################
+# Variables
+################################################################################
+AUTOSOMALCHROMO = config['AUTOSOMALCHROMO']
+KNOWNCHROMO = config['KNOWNCHROMO']
+################################################################################
+# Threads
+################################################################################
+fastqc_threads = 1
+trim_threads = 2
+alignment_threads = 4
+filter_bam_threads = 3
+methylation_extraction_threads = 3
+################################################################################
+# RULES
+################################################################################
+rule all:
+	input:
+#FOR SAMPLES
+		#fastQC
+		expand('sample_output/fastqc/{sample}_{read}_fastqc.html', sample=config['SAMPLES'], read=config['READS']),
+		#Length profiles
+		expand('sample_output/Lengths/{sample}_FragsHistogram.pdf', sample=config['SAMPLES']),
+		#expand('sample_output/nucleosome/{sample}.depth', sample=config['SAMPLES']),
+		expand('sample_output/depth/{sample}.depth.txt', sample=config['SAMPLES']),
+		expand("sample_output/conversion_rates/{sample}.bsrate.txt", sample=config['SAMPLES']),
+		#Methylation extraction
+		#expand('sample_output/methylation_extraction/{sample}.bedGraph', sample=config['SAMPLES']),
+		expand('sample_output/methylation_extraction{dir}/{sample}.bedGraph', dir = ['_meth_trim', '_meth_untrim'], sample=config['SAMPLES']),
+		expand('sample_output/mbias/{sample}.pdf', sample=config['SAMPLES']),
+		#expand('sample_output/binned_samples/{dir}/{sample}', sample=config['SAMPLES'], dir=['merged_regions', 'golden_markers']),
+		expand('sample_output/binned_samples{dir}/{dir2}/{sample}', dir = ['_meth_trim', '_meth_untrim'], dir2 = ['merged_regions', 'golden_markers'], sample=config['SAMPLES']),
+		#Tissues of origin
+		#expand('sample_output/tissues_of_origin/{sample}.tsv', sample=config['SAMPLES']),
+		expand('sample_output/tissues_of_origin{dir}/{sample}.tsv', dir = ['_meth_trim', '_meth_untrim'],  sample=config['SAMPLES']),
+		#Donor fraction
+		expand('sample_output/donor_fraction/{sample}.XY', sample=config['SAMPLES']),
+		expand('sample_output/donor_fraction/{chr}/{chr}.binned', chr = config['KNOWNCHROMO']),
+		expand('sample_output/donor_fraction/{chr}/{chr}_depth_binned_cov.txt', chr = config['KNOWNCHROMO']),
+		'sample_output/donor_fraction/bins_to_remove.txt',
+		#expand('sample_output/aligned/chrM/{sample}_mapped_chrM.bam', sample=config['SAMPLES']),
+		#expand('sample_output/aligned/chrM/depth/{sample}.depth', sample=config['SAMPLES']),
+		expand("sample_output/ichorCNA/{sample}/{sample}.cna.seg", sample=config['SAMPLES']),
+		expand("sample_output/ichorCNA_PoN/{sample}/{sample}.cna.seg", sample=config['SAMPLES']),
+		expand("sample_output/ichorCNA_PoN_XY/{sample}/{sample}.cna.seg", sample=config['SAMPLES'])
+
+#FOR CONTROLS
+		#fastQC
+		#expand('control_output/fastqc/{control}_{read}_fastqc.html', control=config['CONTROLS'], read=config['READS']),
+		#Length profiles
+		#expand('control_output/Lengths/{control}_FragsHistogram.pdf', control=config['CONTROLS']),
+		#expand('control_output/conversion_rates/{control}.bsrate.txt', control=config['CONTROLS']),
+
+		#ichorCNA
+		#expand("sample_output/ichorCNA/{sample}/{sample}.correctedDepth.txt", sample = config['SAMPLES'])
+
+
+################################################################################
+################################################################################
+#
+#
+# SAMPLE PROCESSING STEPS
+#
+#
+################################################################################
+################################################################################
+
+################################################################################
+# Preprocessing QC
+################################################################################
+def is_spring(wcrds):
+    """
+    Determine if the input is FQ or SPRING
+    """
+    if os.path.exists(CLUSTER + config['DATA']+'samples/{sample}.spring') and not os.path.exists(CLUSTER+config['DATA']+'samples/{sample}_R1.fastq.gz'):
+        return(True)
+    else:
+        return(False)
+
+if is_spring:
+	rule decompress:
+		input:
+			data = CLUSTER + config['DATA']+'samples/{sample}.spring'
+		output:
+			r1 = CLUSTER+config['DATA']+'samples/{sample}_R1.fastq.gz',
+			r2 = CLUSTER+config['DATA']+'samples/{sample}_R2.fastq.gz'
+		shell:
+			"""
+			{SPRING} -d -i {input.data} -o {output.r1} {output.r2} -g
+			"""
+
+rule fqc:
+	input:
+		r1 = CLUSTER+config['DATA']+'samples/{sample}_R1.fastq.gz',
+		r2 = CLUSTER+config['DATA']+'samples/{sample}_R2.fastq.gz'
+	output:
+		'sample_output/fastqc/{sample}_R1_fastqc.html',
+		'sample_output/fastqc/{sample}_R2_fastqc.html'
+	threads: fastqc_threads
+	params: outdir = 'sample_output/fastqc/'
+	log: 'sample_output/logs/fastqc/{sample}.fqc.log'
+	shell:
+		"""
+		fastqc {input.r1} {input.r2} -t {threads} --outdir {params.outdir} &>{log}
+		"""
+
+################################################################################
+# Processing raw fastQ
+################################################################################
+rule trim:
+	input:
+		r1 = CLUSTER+config['DATA']+'samples/{sample}_R1.fastq.gz',
+		r2 = CLUSTER+config['DATA']+'samples/{sample}_R2.fastq.gz'
+	output:
+		r1p = temp('sample_output/trim/{sample}_R1_trim.fastq'),
+		r2p = temp('sample_output/trim/{sample}_R2_trim.fastq')
+	threads: trim_threads
+	log: 'sample_output/logs/trim/{sample}.trim.log'
+	shell:
+		"""
+		{BBDUK} in1={input.r1} \
+				in2={input.r2} \
+				out1={output.r1p} \
+				out2={output.r2p} \
+				-Xmx1g -threads={threads} \
+                ref={ADAPTOR_SEQUENCES} \
+                tbo tpe maq=10 entropy=0.25 &>{log}
+		"""
+
+################################################################################
+# Alignment to hg19
+################################################################################
+rule alignment:
+	input:
+		r1p = 'sample_output/trim/{sample}_R1_trim.fastq',
+		r2p = 'sample_output/trim/{sample}_R2_trim.fastq'
+	output:
+		bam = 'sample_output/aligned/raw_aligned/{sample}.bam',
+	log: 'sample_output/logs/alignment/{sample}.alignment.log'
+	threads: alignment_threads
+	params:
+		outdir = 'sample_output/aligned/raw_aligned/'
+	shell:
+		"""
+		{BISMARK} --genome {METHREF} \
+					--parallel {threads} \
+					--quiet \
+					-o {params.outdir} \
+					-1 {input.r1p} \
+					-2 {input.r2p}
+		mv {params.outdir}{wildcards.sample}_R1_trim_bismark_bt2_pe.bam {output.bam}
+		mv {params.outdir}{wildcards.sample}_R1_trim_bismark_bt2_PE_report.txt {log}
+		"""
+
+rule filter_bam_get_statistics:
+	input:
+		bam ='sample_output/aligned/raw_aligned/{sample}.bam'
+	output:
+		sorted_bam = temp('sample_output/aligned/raw_aligned/{sample}.sorted.bam'),
+		bismark_dup = temp('sample_output/aligned/raw_aligned/{sample}.deduplicated.bam'),
+		mapped_all_chr='sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam',
+		mapped_all_chr_bai = 'sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam.bai',
+		mapped_autosomal='sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam',
+		mapped_autosomal_bai = 'sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam.bai',
+		mapped_chrM = 'sample_output/aligned/chrM/{sample}_mapped_chrM.bam',
+		mapped_chrM_bai = 'sample_output/aligned/chrM/{sample}_mapped_chrM.bam.bai',
+		dup_stats = 'sample_output/deduplication/{sample}.txt',
+		name_sorted = 'sample_output/aligned/autosomal/{sample}_mapped_autosomal_namesorted.bam'
+	threads: filter_bam_threads
+	log: 'sample_output/logs/deduplication/{sample}.log'
+	params:
+		mapQ='10',
+		outdir = 'sample_output/aligned/raw_aligned/'
+	shell:
+		"""
+		samtools view -f3 -F 256,512 {input.bam} -h -o - | samtools sort -n -@ {threads} - -o {output.sorted_bam}
+		{RMDUPS} -p -o {wildcards.sample} --output_dir {params.outdir} --bam {output.sorted_bam} &> {log}
+		num_reads_analyzed=$(grep 'Total number of alignments analysed' {log} | cut -f2)
+		num_reads_kept=$(grep 'Total count of deduplicated leftover sequences' {log} | cut -f7 -d' ')
+		echo -e "total_reads\treads_kept" > {output.dup_stats}
+		echo -e "$num_reads_analyzed\t$num_reads_kept" >> {output.dup_stats}
+		samtools sort -@ {threads} {output.bismark_dup} -o {output.mapped_all_chr}
+		samtools index {output.mapped_all_chr}
+
+		samtools view -@ {threads} -b -q {params.mapQ} {output.mapped_all_chr} {AUTOSOMALCHROMO} -o {output.mapped_autosomal}
+		samtools index {output.mapped_autosomal}
+
+		samtools view -@ {threads} -b -q {params.mapQ} {output.mapped_all_chr} chrM -o {output.mapped_chrM}
+		samtools index {output.mapped_chrM}
+
+		samtools sort -@ {threads} -n {output.mapped_autosomal} -o {output.name_sorted}
+		"""
+
+rule chrM:
+	input:
+		mapped_chrM = 'sample_output/aligned/chrM/{sample}_mapped_chrM.bam',
+		mapped_chrM_bai = 'sample_output/aligned/chrM/{sample}_mapped_chrM.bam.bai',
+	output:
+		depth = 'sample_output/aligned/chrM/depth/{sample}.depth'
+	shell:
+		"""
+		samtools depth {input.mapped_chrM} > {output.depth}
+		"""
+
+################################################################################
+# Post alignement statistics
+################################################################################
+rule length_profiles:
+	input:
+		mapped_autosomal= 'sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam'
+	output:
+		lengths='sample_output/Lengths/{sample}_aligned.lengths.gz',
+		length_counts = 'sample_output/Lengths/{sample}_aligned.lengths.counts',
+		pdf='sample_output/Lengths/{sample}_FragsHistogram.pdf'
+	shell:
+		"""
+		samtools view {input.mapped_autosomal} | awk -v OFS='\t' '{{if ($9>0 && $9<1000) print $1,$9}}' | gzip -9 > {output.lengths}
+        zcat {output.lengths} | cut -f2 | sort | uniq -c > {output.length_counts}
+		Rscript Bin/HistogramFragmentLengths.R {output.length_counts} {output.pdf}
+		"""
+
+rule sequencing_depth:
+	input:
+		mapped_autosomal= 'sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam'
+	output:
+		depth= 'sample_output/depth/{sample}.depth.txt',
+		mosglobal = 'sample_output/depth/{sample}/{sample}.mosdepth.global.dist.txt',
+		mossummary = 'sample_output/depth/{sample}/{sample}.mosdepth.summary.txt',
+		mosperbase ='sample_output/depth/{sample}/{sample}.per-base.bed.gz'
+	params:
+		outdir = 'sample_output/depth/{sample}',
+		mappable_hg19_size = '2684573069',
+		mappable_chr21_size = '48129895'
+	threads: 4
+	shell:
+		"""
+		{MOSDEPTH} -t {threads} {params.outdir}/{wildcards.sample} {input.mapped_autosomal}
+		depth=$(zcat {output.mosperbase} | awk '{{sum+=$4*($3-$2)}} END {{print sum/{params.mappable_hg19_size}}}')
+		echo -e "{wildcards.sample}\t$depth" > {output.depth}
+		"""
+		#"""
+		#depth=$(samtools view -h {input.mapped_autosomal} chr21 | samtools depth - | awk '{{sum+=$3}} END {{print sum/{params.mappable_chr21_size}}}')
+		#echo -e "{wildcards.sample}\t$depth" > {output.depth}
+		#"""
+
+rule estimate_BSconversion:
+	input:
+		mapped_autosomal = 'sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam'
+	output:
+		mr = temp('sample_output/{sample}.mr'),
+        bsrate = 'sample_output/conversion_rates/{sample}.bsrate.txt',
+		sample_rate = 'sample_output/conversion_rates/{sample}.bsconversion'
+	shell:
+		"""
+        {METHPIPETOMR} -m general -o {output.mr} -L 500 {input.mapped_autosomal}
+        {METHPIPEBSRATE} -c {HG19} -o {output.bsrate} {output.mr}
+        X=$(head -1 {output.bsrate})
+        echo -e "{wildcards.sample}\t$X" > {output.sample_rate}
+        """
+
+################################################################################
+# Methylation extraction
+# note: requires methylation references to have been prepared.
+################################################################################
+rule methylation_extraction:
+	input:
+		mapped_autosomal= 'sample_output/aligned/autosomal/{sample}_mapped_autosomal.bam',
+		name_sorted = 'sample_output/aligned/autosomal/{sample}_mapped_autosomal_namesorted.bam'
+	output:
+		CpG_bg='sample_output/methylation_extraction{dir}/{sample}.bedGraph',
+		CpG_bg_gz = temp('sample_output/methylation_extraction{dir}/{sample}_mapped_autosomal_namesorted.bedGraph.gz'),
+		CpG_bismark = 'sample_output/methylation_extraction{dir}/{sample}.bismark.cov.gz',
+		mbias = 'sample_output/methylation_extraction{dir}/mbias/{sample}.M-bias.txt',
+		CHGOB = 'sample_output/methylation_extraction{dir}/CHG/{sample}_CHG_OB.txt.gz',
+		CHGOT = 'sample_output/methylation_extraction{dir}/CHG/{sample}_CHG_OT.txt.gz',
+		CHHOB = 'sample_output/methylation_extraction{dir}/CHH/{sample}_CHH_OB.txt.gz',
+		CHHOT = 'sample_output/methylation_extraction{dir}/CHH/{sample}_CHH_OT.txt.gz',
+		CpGOB = 'sample_output/methylation_extraction{dir}/CpG/{sample}_CpG_OB.txt.gz',
+		CpGOT = 'sample_output/methylation_extraction{dir}/CpG/{sample}_CpG_OT.txt.gz',
+		log = 'sample_output/logs/methylation_extraction{dir}/{sample}.methylation_extraction.log'
+	threads: methylation_extraction_threads
+	params:
+		outdir = 'sample_output/methylation_extraction{dir}/'
+	shell:
+		"""
+		echo {wildcards.dir}
+		if [ {wildcards.dir} == "_meth_trim" ]
+		then
+			extra_params="--gzip --ignore 10 --ignore_r2 5"
+		else
+			extra_params="--gzip"
+		fi
+		echo $extra_params
+		{METHEXT} --parallel {threads} \
+					-p \
+					--bedGraph \
+					--genome {METHREF} \
+					-o {params.outdir} \
+					$extra_params \
+					{input.name_sorted}
+		gunzip -c {params.outdir}{wildcards.sample}_mapped_autosomal_namesorted.bedGraph.gz | sort-bed - > {output.CpG_bg}
+		mv {params.outdir}{wildcards.sample}_mapped_autosomal_namesorted.bismark.cov.gz {output.CpG_bismark}
+		mv {params.outdir}{wildcards.sample}_mapped_autosomal_namesorted_splitting_report.txt {output.log}
+
+		mv {params.outdir}{wildcards.sample}_mapped_autosomal_namesorted.M-bias.txt {output.mbias}
+		mv {params.outdir}CHG_OT_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CHGOT}
+		mv {params.outdir}CHG_OB_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CHGOB}
+		mv {params.outdir}CHH_OT_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CHHOT}
+		mv {params.outdir}CHH_OB_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CHHOB}
+		mv {params.outdir}CpG_OT_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CpGOT}
+		mv {params.outdir}CpG_OB_{wildcards.sample}_mapped_autosomal_namesorted.txt.gz {output.CpGOB}
+		"""
+
+rule mbias:
+	input:
+		mbias_untrimmed = 'sample_output/methylation_extraction_meth_untrim/mbias/{sample}.M-bias.txt',
+		mbias_trimmed = 'sample_output/methylation_extraction_meth_trim/mbias/{sample}.M-bias.txt'
+	output:
+		pdf= 'sample_output/mbias/{sample}.pdf'
+	shell:
+		"""
+		python Bin/plot_mbias.py {input.mbias_trimmed} {input.mbias_untrimmed} {output.pdf}
+		"""
+
+rule binned_methylation:
+	input:
+		CpG_bg='sample_output/methylation_extraction{dir}/{sample}.bedGraph',
+		merged_bed = CLUSTER+'/workdir/apc88/GVHD/Reference_Methylomes/MethylMatrix/all_chr/all_groups_merged_overlap.metilene',
+		golden_bed = CLUSTER+'/workdir/apc88/GVHD/Reference_Methylomes/MethylMatrix/golden_markers/golden_markers.bed'
+	output:
+		CpG_bg_tmp=temp('sample_output/aligned/autosomal/{sample}_mapped_autosomal_CpG.bedGraph{dir}.tmp'),
+		intersected_merged_sample_tmp = temp('sample_output/{sample}.intersect.merged{dir}.tmp'),
+		intersected_golden_sample_tmp = temp('sample_output/{sample}.intersect.golden{dir}.tmp'),
+		binned_CpG_DMR_merged='sample_output/binned_samples{dir}/merged_regions/{sample}',
+		binned_CpG_DMR_golden = 'sample_output/binned_samples{dir}/golden_markers/{sample}'
+	shell:
+		"""
+		tail -n +2 {input.CpG_bg} | bedtools sort -i - > {output.CpG_bg_tmp}
+
+		bedtools intersect -wo -a {input.merged_bed} -b {output.CpG_bg_tmp} -sorted |
+			awk '$6-$5==1 {{print $0}}' | awk 'NF{{NF-=1}};1' > {output.intersected_merged_sample_tmp}
+		Rscript Bin/aggregate_over_regions.R {output.intersected_merged_sample_tmp} {output.binned_CpG_DMR_merged}
+
+		bedtools intersect -wo -a {input.golden_bed} -b {output.CpG_bg_tmp} -sorted |
+			awk '$6-$5==1 {{print $0}}' | awk 'NF{{NF-=1}};1' > {output.intersected_golden_sample_tmp}
+		Rscript Bin/aggregate_over_regions.R {output.intersected_golden_sample_tmp} {output.binned_CpG_DMR_golden}
+		"""
+
+rule tissue_of_origin:
+	input:
+		binned_CpG_DMR_golden = 'sample_output/binned_samples{dir}/golden_markers/{sample}',
+		reference_methylomes = CLUSTER + '//workdir/apc88/GVHD/Reference_Methylomes/MethylMatrix/golden_markers/MethylMatrix_binned',
+		lookup = CLUSTER + '/workdir/apc88/GVHD/Reference_Methylomes/lookup_table.txt'
+	output:
+		mp = 'sample_output/tissues_of_origin{dir}/{sample}.tsv'
+	shell:
+		"""
+		Rscript Bin/tissues_of_origin.R \
+			{input.binned_CpG_DMR_golden} \
+			{input.reference_methylomes} \
+			{output.mp} \
+			{input.lookup} \
+			{wildcards.sample}
+		"""
+################################################################################
+# Donor fraction
+################################################################################
+rule synthetic_reads_per_chr:
+	input:
+		hg19CT = '../references/hg19_Bismark/Bisulfite_Genome/CT_conversion/genome_mfa.CT_conversion.fa',
+		hg19GA = '../references/hg19_Bismark/Bisulfite_Genome/GA_conversion/genome_mfa.GA_conversion.fa'
+	output:
+		region_fileCT = temp('sample_output/donor_fraction/{chr}/{chr}CT.txt'),
+		region_fileGA = temp('sample_output/donor_fraction/{chr}/{chr}GA.txt'),
+		chr_fasta = temp('sample_output/donor_fraction/{chr}/{chr}.fa'),
+		fq1 = temp('sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_R1.fq'),
+		fq2 = temp('sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_R2.fq')
+	shell:
+		"""
+		echo {wildcards.chr}_CT_converted > {output.region_fileCT}
+		echo {wildcards.chr}_GA_converted > {output.region_fileGA}
+		{SEQTK} subseq {input.hg19CT} {output.region_fileCT} > {output.chr_fasta}
+		{SEQTK} subseq {input.hg19GA} {output.region_fileGA} >> {output.chr_fasta}
+		wgsim -d 167 -s 15 -N 10000000 -1 75 -2 75 -S 1 {output.chr_fasta} {output.fq1} {output.fq2}
+		"""
+
+rule map_synthetic_reads:
+	input:
+		fq1 = 'sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_R1.fq',
+		fq2 = 'sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_R2.fq'
+	output:
+		bam = temp('sample_output/donor_fraction/{chr}/synthetic_reads_{chr}.bam'),
+		sorted_bam = 'sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_sorted.bam',
+		log = 'sample_output/logs/donor_fraction/{chr}.df.alignment.log'
+	threads: 3
+	params:
+		outdir = 'sample_output/donor_fraction/{chr}/'
+	shell:
+		"""
+		{BISMARK} --genome {METHREF} \
+					--parallel {threads} \
+					--quiet \
+					--local \
+					-o {params.outdir} \
+					-1 {input.fq1} \
+					-2 {input.fq2}
+		mv {params.outdir}synthetic_reads_{wildcards.chr}_R1_bismark_bt2_pe.bam {output.bam}
+		mv {params.outdir}synthetic_reads_{wildcards.chr}_R1_bismark_bt2_PE_report.txt {output.log}
+		samtools sort -@ {threads} {output.bam} > {output.sorted_bam}
+		samtools index {output.sorted_bam}
+		"""
+
+rule bin_chromosomes:
+	input:
+		chr_lengths = '../references/hg19.chr.lengths'
+	output:
+		chr_length = temp('sample_output/donor_fraction/{chr}/{chr}.length'),
+		chr_binned = 'sample_output/donor_fraction/{chr}/{chr}.binned'
+	shell:
+		"""
+		grep -w '{wildcards.chr}' {input.chr_lengths} | awk -F'\t' '{{print $1,"1",$2}}' > {output.chr_length}
+		bedops --chop 499 --stagger 500 -x {output.chr_length} > {output.chr_binned}
+		"""
+
+autosomal_list = ['chr1', 'chr2', 'chr3', 'chr4', 'chr5', 'chr6', 'chr7', 'chr8', 'chr9', 'chr10', 'chr11', 'chr12', 'chr13', 'chr14', 'chr15', 'chr16', 'chr17', 'chr18', 'chr19', 'chr20', 'chr21', 'chr22']
+rule autosomal_binned:
+	input:
+		expand('sample_output/donor_fraction/{autosomal}/{autosomal}.binned', autosomal = autosomal_list)
+	output:
+		'sample_output/donor_fraction/autosomal.binned'
+	shell:
+		"""
+		cat {input} | sort-bed - > {output[0]}
+		"""
+
+rule chrY_mapping:
+	input:
+		sorted_bam = 'sample_output/donor_fraction/{chr}/synthetic_reads_{chr}_sorted.bam',
+		chr_binned = 'sample_output/donor_fraction/{chr}/{chr}.binned',
+		autosomal_binned = 'sample_output/donor_fraction/autosomal.binned'
+	output:
+		depth_file = 'sample_output/donor_fraction/{chr}/{chr}_depth.txt',
+		depth_binned = 'sample_output/donor_fraction/{chr}/{chr}_depth_binned.txt',
+		depth_binned_cov = 'sample_output/donor_fraction/{chr}/{chr}_depth_binned_cov.txt'
+	params:
+		chrY_binned = 'sample_output/donor_fraction/chrY/chrY.binned'
+	shell:
+		"""
+		if [ {wildcards.chr} != "chrY" ]; then
+			samtools view -h {input.sorted_bam} 'chrY' | samtools depth - | awk -F'\t' '{{print $1,$2,$2+1,NR,$3}}' | sort-bed - > {output.depth_file}
+			bedmap --echo --fraction-map 1 --sum --delim '\t' {params.chrY_binned} {output.depth_file} > {output.depth_binned}
+			grep -v 'NAN' {output.depth_binned} > {output.depth_binned_cov} || true
+		fi
+
+		if [ {wildcards.chr} == "chrY" ]; then
+			samtools view -h {input.sorted_bam} {AUTOSOMALCHROMO} | samtools sort - | samtools depth - | awk -F'\t' '{{print $1,$2,$2+1,NR,$3}}' | sort-bed - > {output.depth_file}
+			bedmap --echo --fraction-map 1 --sum --delim '\t' {input.autosomal_binned} {output.depth_file} > {output.depth_binned}
+			grep -v 'NAN' {output.depth_binned} > {output.depth_binned_cov} || true
+		fi
+		"""
+
+rule get_removal_bins:
+	input:
+		expand('sample_output/donor_fraction/{chr}/{chr}_depth_binned_cov.txt', chr = KNOWNCHROMO)
+	output:
+		'sample_output/donor_fraction/bins_to_remove.txt'
+	params:
+		file_path = 'sample_output/donor_fraction/',
+		max_cov = '10'
+	shell:
+		"""
+		Rscript Bin/donor_fraction_bins_to_remove.R {params.file_path} {output[0]} {params.max_cov}
+		"""
+
+rule XY_fraction:
+	input:
+		mapped_all_chr='sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam',
+		mapped_all_chr_bai = 'sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam.bai',
+		bins='sample_output/donor_fraction/bins_to_remove.txt',
+		mapfile = CLUSTER + '/workdir/apc88/GVHD/software/HMMcopy/data/500.hg19.full.map.wig',
+		gcfile = CLUSTER + '/workdir/apc88/GVHD/software/HMMcopy/data/500.hg19.full.gc.wig',
+		removals = 'sample_output/donor_fraction/bins_to_remove.txt'
+	output:
+		readcounts = temp('sample_output/donor_fraction/{sample}.auto.readcounts.wig'),
+		XY = 'sample_output/donor_fraction/{sample}.XY'
+	params:
+		mapQ = '10'
+	shell:
+		"""
+		samtools index {input.mapped_all_chr}
+		{HMMCOPY_READCOUNTER} -w 500 -q {params.mapQ} \
+			-c chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX,chrY \
+			{input.mapped_all_chr} > {output.readcounts}
+		Rscript Bin/XY_fraction.R {wildcards.sample} {output.readcounts} {input.mapfile} {input.gcfile} {output.XY} {input.removals}
+		"""
+
+################################################################################
+################################################################################
+#
+#
+# CONTROL PROCESSING STEPS
+#
+#
+################################################################################
+################################################################################
+
+################################################################################
+# Preprocessing QC
+################################################################################
+rule fqc_CTL:
+	input:
+		r1 = CLUSTER+config['DATA']+'samples/{control}_R1.fastq.gz',
+		r2 = CLUSTER+config['DATA']+'samples/{control}_R2.fastq.gz'
+	output:
+		'control_output/fastqc/{control}_R1_fastqc.html',
+		'control_output/fastqc/{control}_R2_fastqc.html'
+	threads: fastqc_threads
+	log: 'control_output/logs/fastqc/{control}.fqc.log'
+	shell:
+		"""
+		fastqc {input.r1} {input.r2} -t {threads} --outdir control_output/fastqc &>{log}
+		"""
+
+################################################################################
+# Processing raw fastQ
+################################################################################
+rule trim_CTL:
+	input:
+		r1 = CLUSTER+config['DATA']+'samples/{control}_R1.fastq.gz',
+		r2 = CLUSTER+config['DATA']+'samples/{control}_R2.fastq.gz'
+	output:
+		r1p = temp('control_output/trim/{control}_R1_trim.fastq'),
+		r2p = temp('control_output/trim/{control}_R2_trim.fastq')
+	threads: trim_threads
+	log: 'control_output/logs/trim/{control}.trim.log'
+	shell:
+		"""
+		{BBDUK} in1={input.r1} \
+				in2={input.r2} \
+				out1={output.r1p} \
+				out2={output.r2p} \
+				-Xmx1g \
+                ref={ADAPTOR_SEQUENCES} \
+                tbo tpe &>{log}
+		"""
+
+################################################################################
+# Alignment to hg19
+################################################################################
+rule alignment_CTL:
+	input:
+		r1p = 'control_output/trim/{control}_R1_trim.fastq',
+		r2p = 'control_output/trim/{control}_R2_trim.fastq'
+	output:
+		bam = 'control_output/aligned/raw_aligned/{control}.bam',
+		log = 'control_output/logs/alignment/{control}.alignment.log'
+	threads: alignment_threads
+	params:
+		outdir = 'control_output/aligned/raw_aligned/'
+	shell:
+		"""
+		{BISMARK} --genome {CTLREF} \
+					--parallel {threads} \
+					--quiet \
+					-o {params.outdir} \
+					-1 {input.r1p} \
+					-2 {input.r2p}
+		mv {params.outdir}{wildcards.control}_R1_trim_bismark_bt2_pe.bam {output.bam}
+		mv {params.outdir}{wildcards.control}_R1_trim_bismark_bt2_PE_report.txt {output.log}
+		"""
+
+rule filter_bam_CTL:
+	input:
+		tagged_bam ='control_output/aligned/raw_aligned/{control}.bam'
+	output:
+		mapped='control_output/aligned/all_chr/{control}_mapped.bam'
+	threads: filter_bam_threads
+	params:
+		mapQ='10'
+	shell:
+		"""
+		samtools view -@ {threads} -b -f 3 -F 256,512,1024 {input.tagged_bam} |
+			samtools sort -n -@ {threads} -o - | samtools fixmate -@ {threads} -m - - |
+			samtools sort -@ {threads} -o - | samtools markdup -r - {output.mapped}
+
+		samtools index {output.mapped}
+		"""
+
+################################################################################
+# Post alignement statistics
+################################################################################
+rule length_profiles_CTL:
+	input:
+		mapped= 'control_output/aligned/all_chr/{control}_mapped.bam'
+	output:
+		lengths='control_output/Lengths/{control}_aligned.lengths.gz',
+		length_counts ='control_output/Lengths/{control}_aligned.lengths.counts',
+		pdf='control_output/Lengths/{control}_FragsHistogram.pdf'
+	shell:
+		"""
+		samtools view {input.mapped} | awk -v OFS='\t' '{{if ($9>0 && $9<1000) print $1,$9}}' | gzip -9 > {output.lengths}
+		zcat {output.lengths} | cut -f2 | sort | uniq -c > {output.length_counts}
+        Rscript Bin/HistogramFragmentLengths.R {output.length_counts} {output.pdf}
+		"""
+
+rule estimate_BSconversion_CTL:
+	input:
+		mapped = 'control_output/aligned/all_chr/{control}_mapped.bam'
+	output:
+		mr = temp('control_output/{control}.mr'),
+        bsrate = "control_output/conversion_rates/{control}.bsrate.txt",
+		sample_rate = 'control_output/conversion_rates/{control}.tsv'
+	shell:
+		"""
+        {METHPIPETOMR} -m general -o {output.mr} -L 500 {input.mapped}
+        {METHPIPEBSRATE} -c {CTLREF_fasta} -o {output.bsrate} {output.mr}
+        X=$(head -1 {output.bsrate})
+        echo -e "{wildcards.control}\t$X" > {output.sample_rate}
+        """
+
+#################
+#################
+
+rule read_counter:
+    input:
+        bam_file = 'sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam'
+    output:
+        "sample_output/readDepth/{sample}.bin{binSize}.wig"
+    params:
+        readCounter=config["readCounterScript"],
+        binSize=config["binSize"],
+        qual="20",
+        chrs=config["chrs"]
+    resources:
+        mem=4
+    log:
+        "logs/readDepth/{sample}.bin{binSize}.log"
+    shell:
+        "{params.readCounter} {input.bam_file} -c {params.chrs} -w {params.binSize} -q {params.qual} > {output} 2> {log}"
+
+
+
+rule ichorCNA:
+    input:
+        tum="sample_output/readDepth/{sample}.bin"+str(config["binSize"])+".wig"
+    output:
+        corrDepth="sample_output/ichorCNA/{sample}/{sample}.correctedDepth.txt",
+        #param="sample_output/ichorCNA/{sample}/{sample}.params.txt",
+        cna="sample_output/ichorCNA/{sample}/{sample}.cna.seg",
+        #segTxt="sample_output/ichorCNA/{sample}/{sample}.seg.txt",
+        #seg="sample_output/ichorCNA/{sample}/{sample}.seg",
+        #rdata="sample_output/ichorCNA/{sample}/{sample}.RData"
+    params:
+        outDir="sample_output/ichorCNA/{sample}/",
+        rscript=config["ichorCNA_rscript"],
+        id="{sample}",
+        ploidy=config["ichorCNA_ploidy"],
+        normal=config["ichorCNA_normal"],
+        gcwig=config["ichorCNA_gcWig"],
+        mapwig=config["ichorCNA_mapWig"],
+        normalpanel=config["ichorCNA_normalPanel"],
+        estimateNormal=config["ichorCNA_estimateNormal"],
+        estimatePloidy=config["ichorCNA_estimatePloidy"],
+        estimateClonality=config["ichorCNA_estimateClonality"],
+        scStates=config["ichorCNA_scStates"],
+        maxCN=config["ichorCNA_maxCN"],
+        includeHOMD=config["ichorCNA_includeHOMD"],
+        chrs=config["ichorCNA_chrs"],
+        chrTrain=config["ichorCNA_chrTrain"],
+        genomeBuild=config["ichorCNA_genomeBuild"],
+        genomeStyle=config["ichorCNA_genomeStyle"],
+        centromere=config["ichorCNA_centromere"],
+        fracReadsChrYMale=config["ichorCNA_fracReadsInChrYForMale"],
+        minMapScore=config["ichorCNA_minMapScore"],
+        maxFracGenomeSubclone=config["ichorCNA_maxFracGenomeSubclone"],
+        maxFracCNASubclone=config["ichorCNA_maxFracCNASubclone"],
+        exons=config["ichorCNA_exons"],
+        txnE=config["ichorCNA_txnE"],
+        txnStrength=config["ichorCNA_txnStrength"],
+        plotFileType=config["ichorCNA_plotFileType"],
+        plotYlim=config["ichorCNA_plotYlim"],
+        libdir=config["ichorCNA_libdir"]
+    resources:
+        mem=4
+    log:
+        "logs/ichorCNA/{sample}.log"
+    shell:
+        """
+        /programs/R-3.6.3/bin/Rscript {params.rscript} --id {params.id} --libdir {params.libdir} --WIG {input.tum} --gcWig {params.gcwig} --mapWig {params.mapwig} --normalPanel {params.normalpanel} --ploidy \"{params.ploidy}\" --normal \"{params.normal}\" --maxCN {params.maxCN} --includeHOMD {params.includeHOMD} --chrs \"{params.chrs}\" --chrTrain \"{params.chrTrain}\" --genomeStyle {params.genomeStyle} --genomeBuild {params.genomeBuild} --estimateNormal {params.estimateNormal} --estimatePloidy {params.estimatePloidy} --estimateScPrevalence {params.estimateClonality} --scStates \"{params.scStates}\" --centromere {params.centromere} --exons.bed {params.exons} --txnE {params.txnE} --txnStrength {params.txnStrength} --minMapScore {params.minMapScore} --fracReadsInChrYForMale {params.fracReadsChrYMale} --maxFracGenomeSubclone {params.maxFracGenomeSubclone} --maxFracCNASubclone {params.maxFracCNASubclone} --plotFileType {params.plotFileType} --plotYLim \"{params.plotYlim}\" --outDir {params.outDir} > {log} 2> {log}
+        """
+
+rule create_PoN:
+	input:
+		norm1 = "sample_output/readDepth/SSLP_MEYER_IRBHLY1.bin1000000.wig",
+		norm2 = "sample_output/readDepth/SSLP_MEYER_IRBHLY2.bin1000000.wig",
+		norm3 = "sample_output/readDepth/SSLP_MEYER_IRBHLY3.bin1000000.wig",
+		norm4 = "sample_output/readDepth/SSLP_MEYER_IRBHLY4.bin1000000.wig",
+		norm5 = "sample_output/readDepth/SSLP_MEYER_IRBHLY5.bin1000000.wig"
+	params:
+		gcwig=config["ichorCNA_gcWig"],
+		mapwig=config["ichorCNA_mapWig"],
+		centromere=config["ichorCNA_centromere"],
+		outfile = "sample_output/ichorCNA_PoN/PoN"
+	output:
+		PoN = "sample_output/ichorCNA_PoN/PoN_wigfiles.txt",
+		outfile = "sample_output/ichorCNA_PoN/PoN_median.rds"
+	shell:
+		"""
+		echo "{input.norm1}" > {output.PoN}
+		echo "{input.norm2}" >> {output.PoN}
+		echo "{input.norm3}" >> {output.PoN}
+		echo "{input.norm4}" >> {output.PoN}
+		echo "{input.norm5}" >> {output.PoN}
+		/programs/R-3.6.3/bin/Rscript ../software/ichorCNA/scripts/createPanelOfNormals.R --filelist {output.PoN} --gcWig {params.gcwig} \
+			--mapWig {params.mapwig} --centromere {params.centromere} --outfile {params.outfile}
+		"""
+
+rule ichorCNA_PoN:
+	input:
+		tum="sample_output/readDepth/{sample}.bin"+str(config["binSize"])+".wig",
+		PoN = "sample_output/ichorCNA_PoN/PoN_median.rds"
+	output:
+		corrDepth="sample_output/ichorCNA_PoN/{sample}/{sample}.correctedDepth.txt",
+		#param="sample_output/ichorCNA/{sample}/{sample}.params.txt",
+		cna="sample_output/ichorCNA_PoN/{sample}/{sample}.cna.seg",
+		#segTxt="sample_output/ichorCNA/{sample}/{sample}.seg.txt",
+		#seg="sample_output/ichorCNA/{sample}/{sample}.seg",
+		#rdata="sample_output/ichorCNA/{sample}/{sample}.RData"
+	params:
+		outDir="sample_output/ichorCNA_PoN/{sample}/",
+		rscript=config["ichorCNA_rscript"],
+		id="{sample}",
+		#ploidy=config["ichorCNA_ploidy"],
+		ploidy = "c(2)",
+		normal=config["ichorCNA_normal"],
+		gcwig=config["ichorCNA_gcWig"],
+		mapwig=config["ichorCNA_mapWig"],
+		normalpanel=config["ichorCNA_normalPanel"],
+		estimateNormal=config["ichorCNA_estimateNormal"],
+		estimatePloidy=config["ichorCNA_estimatePloidy"],
+		estimateClonality=config["ichorCNA_estimateClonality"],
+		scStates=config["ichorCNA_scStates"],
+		maxCN=config["ichorCNA_maxCN"],
+		includeHOMD=config["ichorCNA_includeHOMD"],
+		chrs=config["ichorCNA_chrs"],
+		chrTrain=config["ichorCNA_chrTrain"],
+		genomeBuild=config["ichorCNA_genomeBuild"],
+		genomeStyle=config["ichorCNA_genomeStyle"],
+		centromere=config["ichorCNA_centromere"],
+		fracReadsChrYMale=config["ichorCNA_fracReadsInChrYForMale"],
+		minMapScore=config["ichorCNA_minMapScore"],
+		maxFracGenomeSubclone=config["ichorCNA_maxFracGenomeSubclone"],
+		maxFracCNASubclone=config["ichorCNA_maxFracCNASubclone"],
+		exons=config["ichorCNA_exons"],
+		txnE=config["ichorCNA_txnE"],
+		txnStrength=config["ichorCNA_txnStrength"],
+		plotFileType=config["ichorCNA_plotFileType"],
+		plotYlim=config["ichorCNA_plotYlim"],
+		libdir=config["ichorCNA_libdir"]
+	resources:
+		mem=4
+	log:
+		"logs/ichorCNA_PoN/{sample}.log"
+	shell:
+		"""
+		/programs/R-3.6.3/bin/Rscript {params.rscript} --id {params.id} --libdir {params.libdir} --WIG {input.tum} --gcWig {params.gcwig} --mapWig {params.mapwig} --normalPanel {params.normalpanel} --ploidy \"{params.ploidy}\" --normal \"{params.normal}\" --maxCN {params.maxCN} --includeHOMD {params.includeHOMD} --chrs \"{params.chrs}\" --chrTrain \"{params.chrTrain}\" --genomeStyle {params.genomeStyle} --genomeBuild {params.genomeBuild} --estimateNormal {params.estimateNormal} --estimatePloidy {params.estimatePloidy} --estimateScPrevalence {params.estimateClonality} --scStates \"{params.scStates}\" --centromere {params.centromere} --exons.bed {params.exons} --txnE {params.txnE} --txnStrength {params.txnStrength} --minMapScore {params.minMapScore} --fracReadsInChrYForMale {params.fracReadsChrYMale} --maxFracGenomeSubclone {params.maxFracGenomeSubclone} --maxFracCNASubclone {params.maxFracCNASubclone} --plotFileType {params.plotFileType} --plotYLim \"{params.plotYlim}\" --outDir {params.outDir} --normalPanel {input.PoN} > {log} 2> {log}
+		"""
+
+rule read_counter_XY:
+    input:
+        bam_file = 'sample_output/aligned/all_chr/{sample}_mapped_all_chr.bam'
+    output:
+        "sample_output/readDepth_XY/{sample}.bin{binSize}.wig"
+    params:
+        readCounter=config["readCounterScript"],
+        binSize=config["binSize"],
+        qual="20",
+        chrs=config["chrsXY"]
+    resources:
+        mem=4
+    log:
+        "logs/readDepth_XY/{sample}.bin{binSize}.log"
+    shell:
+        "{params.readCounter} {input.bam_file} -c {params.chrs} -w {params.binSize} -q {params.qual} > {output} 2> {log}"
+
+rule create_PoN_XY:
+	input:
+		norm1 = "sample_output/readDepth_XY/SSLP_MEYER_IRBHLY1.bin1000000.wig",
+		norm2 = "sample_output/readDepth_XY/SSLP_MEYER_IRBHLY2.bin1000000.wig",
+		norm3 = "sample_output/readDepth_XY/SSLP_MEYER_IRBHLY3.bin1000000.wig",
+		norm4 = "sample_output/readDepth_XY/SSLP_MEYER_IRBHLY4.bin1000000.wig",
+		norm5 = "sample_output/readDepth_XY/SSLP_MEYER_IRBHLY5.bin1000000.wig"
+	params:
+		gcwig=config["ichorCNA_gcWig"],
+		mapwig=config["ichorCNA_mapWig"],
+		centromere=config["ichorCNA_centromere"],
+		outfile = "sample_output/ichorCNA_PoN_XY/PoN",
+		chrs=config["ichorCNA_chrsXY"]
+	output:
+		PoN = "sample_output/ichorCNA_PoN_XY/PoN_wigfiles.txt",
+		outfile = "sample_output/ichorCNA_PoN_XY/PoN_median.rds"
+	shell:
+		"""
+		echo "{input.norm1}" > {output.PoN}
+		echo "{input.norm2}" >> {output.PoN}
+		echo "{input.norm3}" >> {output.PoN}
+		echo "{input.norm4}" >> {output.PoN}
+		echo "{input.norm5}" >> {output.PoN}
+		/programs/R-3.6.3/bin/Rscript ../software/ichorCNA/scripts/createPanelOfNormals.R --filelist {output.PoN} --chrs \"{params.chrs}\" --gcWig {params.gcwig} \
+			--mapWig {params.mapwig} --centromere {params.centromere} --outfile {params.outfile}
+		"""
+
+rule ichorCNA_PoN_XY:
+	input:
+		tum="sample_output/readDepth_XY/{sample}.bin"+str(config["binSize"])+".wig",
+		PoN = "sample_output/ichorCNA_PoN_XY/PoN_median.rds"
+	output:
+		corrDepth="sample_output/ichorCNA_PoN_XY/{sample}/{sample}.correctedDepth.txt",
+		#param="sample_output/ichorCNA/{sample}/{sample}.params.txt",
+		cna="sample_output/ichorCNA_PoN_XY/{sample}/{sample}.cna.seg",
+		#segTxt="sample_output/ichorCNA/{sample}/{sample}.seg.txt",
+		#seg="sample_output/ichorCNA/{sample}/{sample}.seg",
+		#rdata="sample_output/ichorCNA/{sample}/{sample}.RData"
+	params:
+		outDir="sample_output/ichorCNA_PoN_XY/{sample}/",
+		rscript=config["ichorCNA_rscript"],
+		id="{sample}",
+		#ploidy=config["ichorCNA_ploidy"],
+		ploidy = "c(2)",
+		normal=config["ichorCNA_normal"],
+		gcwig=config["ichorCNA_gcWig"],
+		mapwig=config["ichorCNA_mapWig"],
+		normalpanel=config["ichorCNA_normalPanel"],
+		estimateNormal=config["ichorCNA_estimateNormal"],
+		estimatePloidy=config["ichorCNA_estimatePloidy"],
+		estimateClonality=config["ichorCNA_estimateClonality"],
+		scStates=config["ichorCNA_scStates"],
+		maxCN=config["ichorCNA_maxCN"],
+		includeHOMD=config["ichorCNA_includeHOMD"],
+		chrs=config["ichorCNA_chrsXY"],
+		chrTrain=config["ichorCNA_chrTrain"],
+		genomeBuild=config["ichorCNA_genomeBuild"],
+		genomeStyle=config["ichorCNA_genomeStyle"],
+		centromere=config["ichorCNA_centromere"],
+		fracReadsChrYMale=config["ichorCNA_fracReadsInChrYForMale"],
+		minMapScore=config["ichorCNA_minMapScore"],
+		maxFracGenomeSubclone=config["ichorCNA_maxFracGenomeSubclone"],
+		maxFracCNASubclone=config["ichorCNA_maxFracCNASubclone"],
+		exons=config["ichorCNA_exons"],
+		txnE=config["ichorCNA_txnE"],
+		txnStrength=config["ichorCNA_txnStrength"],
+		plotFileType=config["ichorCNA_plotFileType"],
+		plotYlim=config["ichorCNA_plotYlim"],
+		libdir=config["ichorCNA_libdir"]
+	resources:
+		mem=4
+	log:
+		"logs/ichorCNA_PoN_XY/{sample}.log"
+	shell:
+		"""
+		/programs/R-3.6.3/bin/Rscript {params.rscript} --id {params.id} --libdir {params.libdir} --WIG {input.tum} --gcWig {params.gcwig} --mapWig {params.mapwig} --normalPanel {params.normalpanel} --ploidy \"{params.ploidy}\" --normal \"{params.normal}\" --maxCN {params.maxCN} --includeHOMD {params.includeHOMD} --chrs \"{params.chrs}\" --chrTrain \"{params.chrTrain}\" --genomeStyle {params.genomeStyle} --genomeBuild {params.genomeBuild} --estimateNormal {params.estimateNormal} --estimatePloidy {params.estimatePloidy} --estimateScPrevalence {params.estimateClonality} --scStates \"{params.scStates}\" --centromere {params.centromere} --exons.bed {params.exons} --txnE {params.txnE} --txnStrength {params.txnStrength} --minMapScore {params.minMapScore} --fracReadsInChrYForMale {params.fracReadsChrYMale} --maxFracGenomeSubclone {params.maxFracGenomeSubclone} --maxFracCNASubclone {params.maxFracCNASubclone} --plotFileType {params.plotFileType} --plotYLim \"{params.plotYlim}\" --outDir {params.outDir} --normalPanel {input.PoN} > {log} 2> {log}
+		"""

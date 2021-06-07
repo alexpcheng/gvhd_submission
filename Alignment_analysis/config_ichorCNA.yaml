@@ -1,0 +1,58 @@
+#Strings
+AUTOSOMALCHROMO: chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chr20 chr21 chr22
+
+
+# ichor:
+readCounterScript: ../software/HMMcopy/bin/readCounter
+## ichorCNA params ##
+chrs: chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX
+chrsXY: chr1,chr2,chr3,chr4,chr5,chr6,chr7,chr8,chr9,chr10,chr11,chr12,chr13,chr14,chr15,chr16,chr17,chr18,chr19,chr20,chr21,chr22,chrX,chrY
+binSize:  1000000 # set window size to compute coverage
+
+ichorCNA_libdir: None
+# included in GitHub repo
+ichorCNA_rscript:  ../software/ichorCNA/scripts/runIchorCNA.R
+# use panel matching same bin size (optional)
+ichorCNA_normalPanel: ../software/ichorCNA/inst/extdata/HD_ULP_PoN_1Mb_median_normAutosome_mapScoreFiltered_median.rds
+# must use gc wig file corresponding to same binSize (required)
+ichorCNA_gcWig: ../software/ichorCNA/inst/extdata/gc_hg19_1000kb.wig
+# must use map wig file corresponding to same binSize (required)
+ichorCNA_mapWig:  ../software/ichorCNA/inst/extdata/map_hg19_1000kb.wig
+# use bed file if sample has targeted regions, eg. exome data (optional)
+ichorCNA_exons:  NULL
+ichorCNA_centromere:  ../software/ichorCNA/inst/extdata/GRCh37.p13_centromere_UCSC-gapTable.txt
+
+ichorCNA_minMapScore: 0.75
+ichorCNA_chrs: c(1:22, \"X\")
+ichorCNA_chrsXY: c(1:22, \"X\", \"Y\")
+ichorCNA_fracReadsInChrYForMale: 0.002
+ichorCNA_genomeBuild:  hg19
+ichorCNA_genomeStyle:  UCSC
+
+# chrs used for training ichorCNA parameters, e.g. tumor fraction.
+ichorCNA_chrTrain:  paste0('chr', c(1:22))
+# non-tumor fraction parameter restart values; higher values should be included for cfDNA
+ichorCNA_normal:  c(0.5,0.6,0.7,0.8,0.9,0.95)
+# ploidy parameter restart values
+ichorCNA_ploidy:  c(2,3)
+ichorCNA_estimateNormal:  TRUE
+ichorCNA_estimatePloidy:  TRUE
+ichorCNA_estimateClonality: TRUE
+# states to use for subclonal CN
+ichorCNA_scStates:  c(1,3)
+# set maximum copy number to use
+ichorCNA_maxCN:  5
+# TRUE/FALSE to include homozygous deletion state
+ichorCNA_includeHOMD: FALSE
+# Exclude solutions if total length of subclonal CNAs > this fraction of the genome
+ichorCNA_maxFracGenomeSubclone: 0.5
+# Exclude solutions if total length of subclonal CNAs > this fraction of total CNA length
+ichorCNA_maxFracCNASubclone: 0.7
+# control segmentation - higher (e.g. 0.9999999) leads to higher specificity and fewer segments
+# lower (e.g. 0.99) leads to higher sensitivity and more segments
+ichorCNA_txnE:  0.9999
+# control segmentation - higher (e.g. 10000000) leads to higher specificity and fewer segments
+# lower (e.g. 100) leads to higher sensitivity and more segments
+ichorCNA_txnStrength:  10000
+ichorCNA_plotFileType:  pdf
+ichorCNA_plotYlim:  c(-2,4)
