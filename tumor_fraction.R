@@ -2,7 +2,7 @@ library(data.table)
 library(ggplot2)
 library(ggthemes)
 library(stringr)
-source('./ichorCNA_plotting.R')
+source('./ichorCNA_plotting.R') #Need to get from ichorCNA software package
 master_table <- fread('tables/SAMPLE_INFO_MASTER_TABLE.csv')
 master_table$patient_id <- str_pad(as.character(master_table$patient_id), 3, side = "left", "0")
 
