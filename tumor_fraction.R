@@ -14,8 +14,6 @@ master_table$disease_type <- "cancer associated"
 master_table$disease_type[master_table$patient_id %in% c("008", "036")] <- "other"
 master_table$disease_type <- factor(master_table$disease_type, levels = c("cancer associated", "other"))
 
-chimerism <- fread('tables/CHIMERISM.csv')
-
 pdf(file = 'figures/TF_PoN.pdf', width = 120/25.4, height = 45/25.4, useDingbats = FALSE)
 ggplot(data = master_table)+
   geom_line(aes(x=days_post_HCT, y = ichor_TF_PoN, group = patient_id))+
