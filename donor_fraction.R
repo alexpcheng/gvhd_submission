@@ -5,9 +5,6 @@ library(stringr)
 master_table <- fread('tables/SAMPLE_INFO_MASTER_TABLE.csv')
 master_table$patient_id <- str_pad(as.character(master_table$patient_id), 3, side = "left", "0")
 
-chimerism <- fread('tables/CHIMERISM.csv')
-chimerism$patient_id <- str_pad(as.character(chimerism$patient_id), 3, side = "left", "0")
-
 patient <- fread('tables/PATIENT_INFO_MASTER_TABLE.csv')
 patient$patient_id <- str_pad(as.character(patient$patient_id), 3, side = "left", "0")
 
