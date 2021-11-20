@@ -79,9 +79,6 @@ tissue_porportion_melt$variable <- factor(tissue_porportion_melt$variable,
 
 dd <- tissue_porportion_melt[tissue_porportion_melt$patient_id==3 | tissue_porportion_melt$patient_id==17, ]
 
-ff <- dd[dd$patient_id==3, ]
-ff <- ff[ff$days_post_HCT==86, ]
-ff <- ff[order(ff$value*ff$total_cfDNA, decreasing = TRUE), ]
 dd$variable <- factor(dd$variable, 
                       levels = ff$variable)
 
